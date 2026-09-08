@@ -1,0 +1,16 @@
+{
+  "name": "qwen2.5-1.5b-instruct-q4_k_m-recall-controls",
+  "slug": "qwen2.5-1.5b",
+  "hf_repo": "Qwen/Qwen2.5-1.5B-Instruct",
+  "hf_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+  "gguf_repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+  "gguf_revision": "91cad51170dc346986eccefdc2dd33a9da36ead9",
+  "gguf_file": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+  "gguf_sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+  "context_limit": 32768,
+  "context_source": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/blob/989aa7980e4cf806f80c7fef2b1adb7bc71aa306/config.json",
+  "llama_cpp_python": "0.3.35",
+  "hf_precision": "fp32",
+  "gguf_precision": "Q4_K_M",
+  "comparison_note": "Same recall-controls protocol, prompt token IDs and settings as the 0.5B runs; only the model size differs. Runtime and weight precision both differ from any HF run. This does not isolate an architectural speedup."
+}
