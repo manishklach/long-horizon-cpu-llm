@@ -1,0 +1,36 @@
+[
+  {
+    "model": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    "seeds": [
+      101,
+      202,
+      303
+    ],
+    "n_records": 20,
+    "recall_acc": 0.611,
+    "recall_n": 18,
+    "abstain_rate": 0.5,
+    "missing_n": 12,
+    "ttft_mean_s": 0.2702,
+    "tpot_mean_s": 0.0185,
+    "load_ram_mb": 170.1,
+    "peak_ram_mb": 625.3
+  },
+  {
+    "model": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    "seeds": [
+      101,
+      202,
+      303
+    ],
+    "n_records": 20,
+    "recall_acc": 0.556,
+    "recall_n": 18,
+    "abstain_rate": 1.0,
+    "missing_n": 12,
+    "ttft_mean_s": 0.5133,
+    "tpot_mean_s": 0.0417,
+    "load_ram_mb": 1426.7,
+    "peak_ram_mb": 1894.0
+  }
+]

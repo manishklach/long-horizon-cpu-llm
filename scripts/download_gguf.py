@@ -2,6 +2,7 @@
 
 Presets (Q4_K_M ~4-bit, best size/quality for CPU):
   qwen2.5-0.5b  -> Qwen/Qwen2.5-0.5B-Instruct-GGUF / qwen2.5-0.5b-instruct-q4_k_m.gguf (~400MB)
+  qwen2.5-1.5b  -> Qwen/Qwen2.5-1.5B-Instruct-GGUF / qwen2.5-1.5b-instruct-q4_k_m.gguf (~1GB)
   tinyllama-1.1b -> bartowski/TinyLlama-1.1B-Chat-v1.0-GGUF / TinyLlama-1.1B-Chat-v1.0-Q4_K_M.gguf (~700MB)
   qwen3-0.6b    -> Qwen/Qwen3-0.6B-GGUF / Qwen3-0.6B-Q4_K_M.gguf
 
@@ -17,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 PRESETS = {
     "qwen2.5-0.5b": ("Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q4_k_m.gguf"),
+    "qwen2.5-1.5b": ("Qwen/Qwen2.5-1.5B-Instruct-GGUF", "qwen2.5-1.5b-instruct-q4_k_m.gguf"),
     "tinyllama-1.1b": ("bartowski/TinyLlama-1.1B-Chat-v1.0-GGUF", "TinyLlama-1.1B-Chat-v1.0-Q4_K_M.gguf"),
     "qwen3-0.6b": ("Qwen/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q4_K_M.gguf"),
 }

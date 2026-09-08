@@ -7,7 +7,6 @@ requests>=2.31
 pytest>=8.0
 accelerate>=0.33
 streamlit>=1.33
-# optional GGUF backend (CPU wheels exist for Windows):
-# pip install llama-cpp-python
-psutil>=5.9
+llama-cpp-python>=0.3
+psutil>=6.0
 httpx>=0.27
