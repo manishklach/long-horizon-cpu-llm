@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Test / bench artifacts
+.pytest_cache/
+long_context_report.json
+bench_report.html
+*.jsonl
+
+# Data / models / sessions (local only, can be GBs)
+data/
+models/
+*.gguf
+*.bin
+*.safetensors
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Streamlit
+.streamlit/
