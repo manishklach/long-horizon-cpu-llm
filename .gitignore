@@ -14,6 +14,7 @@ bench_report.html
 # Data / models / sessions (local only, can be GBs)
 data/
 models/
+models-*/
 *.gguf
 *.bin
 *.safetensors

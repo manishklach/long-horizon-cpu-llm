@@ -23,10 +23,12 @@ def sha256(path):
 def prepare(spec, root):
     from huggingface_hub import snapshot_download, hf_hub_download
     root = Path(root).resolve()
-    hf = snapshot_download(spec['hf_repo'], revision=spec['hf_revision'], local_dir=root / 'qwen2.5-0.5b-hf',
+    # slug selects per-size artifact dirs; default preserves the original layout.
+    slug = spec.get('slug', 'qwen2.5-0.5b')
+    hf = snapshot_download(spec['hf_repo'], revision=spec['hf_revision'], local_dir=root / f'{slug}-hf',
                            allow_patterns=['*.json', '*.safetensors', '*.txt', '*.jinja'])
     gguf = hf_hub_download(spec['gguf_repo'], spec['gguf_file'], revision=spec['gguf_revision'],
-                           local_dir=root / 'qwen2.5-0.5b-gguf')
+                           local_dir=root / f'{slug}-gguf')
     if sha256(gguf) != spec['gguf_sha256']:
         raise ValueError('GGUF checksum mismatch')
     files = {p.resolve().relative_to(root).as_posix(): sha256(p) for p in sorted(Path(hf).glob('*')) if p.is_file()}
@@ -73,18 +75,19 @@ class Runner:
             raise ValueError('invalid context, thread or batch settings')
         self.manifest = verify(spec, root)
         self.backend, self.context = backend, context
-        self.tok = AutoTokenizer.from_pretrained(Path(root) / 'qwen2.5-0.5b-hf', local_files_only=True)
+        slug = spec.get('slug', 'qwen2.5-0.5b')
+        self.tok = AutoTokenizer.from_pretrained(Path(root) / f'{slug}-hf', local_files_only=True)
         self.settings = {'backend': backend, 'context': context, 'threads': threads, 'batch': batch,
                          'temperature': 0, 'repeat_penalty': 1, 'gpu_layers': 0}
         if backend == 'hf':
             from src.engine.inference import CPUEngine
-            self.engine = CPUEngine(str(Path(root) / 'qwen2.5-0.5b-hf'), max_seq_len=context, threads=threads, dtype='fp32')
+            self.engine = CPUEngine(str(Path(root) / f'{slug}-hf'), max_seq_len=context, threads=threads, dtype='fp32')
             self.settings['precision'] = spec['hf_precision']
         elif backend == 'gguf':
             import llama_cpp
             if llama_cpp.__version__ != spec['llama_cpp_python']:
                 raise ValueError(f"requires llama-cpp-python=={spec['llama_cpp_python']}")
-            self.llm = llama_cpp.Llama(model_path=str(Path(root) / 'qwen2.5-0.5b-gguf' / spec['gguf_file']),
+            self.llm = llama_cpp.Llama(model_path=str(Path(root) / f'{slug}-gguf' / spec['gguf_file']),
                                        n_ctx=context, n_threads=threads, n_threads_batch=threads,
                                        n_batch=batch, n_ubatch=batch, n_gpu_layers=0, seed=0, verbose=False)
             trained = int(self.llm.metadata.get('qwen2.context_length', 0))

@@ -9,7 +9,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-ABSTAIN_PHRASE = "NOT IN RECORDS"
+ABSTAIN_PHRASE = "UNKNOWN"
 
 FIRST = ["Amara", "Boris", "Chloe", "Dev", "Elena", "Farid", "Greta", "Hugo",
          "Ines", "Jamal", "Kira", "Liam", "Mira", "Nadia", "Omar", "Priya",
@@ -48,7 +48,8 @@ def render(records: list[Record]) -> str:
                      for r in records)
 
 
-SYSTEM = ("You answer using ONLY the records below. "
+SYSTEM = ("You answer using ONLY the records below. Return only the requested value, "
+          "with no explanation. "
           f"If the answer is not in the records, reply with exactly: {ABSTAIN_PHRASE}")
 
 
@@ -75,8 +76,20 @@ def missing_item(records: list[Record], rng: random.Random) -> tuple[str, str]:
 
 
 def score_recall(answer: str, expected: str) -> bool:
-    return expected.strip().lower() in answer.strip().lower()
+    """Strict exact-answer scoring (shared with src.bench.tasks.exact_answer).
+
+    Only wrapping whitespace/quotes/terminal punctuation are allowed.
+    Contradictions ('Not Berlin; the office is Lima') and lists fail.
+    """
+    from src.bench.tasks import exact_answer
+    return exact_answer(answer, expected)
 
 
 def score_abstain(answer: str) -> bool:
-    return ABSTAIN_PHRASE in answer
+    """Abstention counts only if the answer IS the abstention phrase.
+
+    'UNKNOWN, but the office is Berlin' fails: hedging plus a guess is a
+    hallucination, not an abstention.
+    """
+    from src.bench.tasks import exact_answer
+    return exact_answer(answer, ABSTAIN_PHRASE)
