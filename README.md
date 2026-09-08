@@ -85,8 +85,13 @@ dashboard/app.py          Streamlit: chat, bench, memory
 ```
 
 ## Notes on scaling
+
 - For 50K-token single-pass on 30B models you need a big Linux CPU box
-  This is a **correct, runnable Python mirror** of its ideas on small models.
+  This is a **correct, runnable Python implementation** of these ideas on small models.
   For 30B: use `qwen3-coder-30b` model id on a big Linux CPU box with `--max-seq 50000`.
 - Correctness first: uses HF `DynamicCache` for logits; `StaticKVCache` mirrors accounting.
   Swap in `attention_head_by_head` as a drop-in kernel experiment (see tests).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
