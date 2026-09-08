@@ -78,6 +78,8 @@ def main():
     ap.add_argument("--protocol", default=PROTOCOL)
     ap.add_argument("--models-root", default="models")
     ap.add_argument("--out-dir", default="eval")
+    ap.add_argument("--tag", default="",
+                    help="suffix for report names, e.g. v2 -> recall-controls-<slug>-v2.json")
     ap.add_argument("--prepare", action="store_true")
     ap.add_argument("--summarize-only", action="store_true")
     a = ap.parse_args()
@@ -88,7 +90,8 @@ def main():
         spec = json.load(open(spec_path, encoding="utf-8-sig"))
         slug = spec["slug"]
         root = os.path.join(a.models_root + "-" + slug)
-        report_path = os.path.join(a.out_dir, f"recall-controls-{slug}.json")
+        tag = f"-{a.tag}" if a.tag else ""
+        report_path = os.path.join(a.out_dir, f"recall-controls-{slug}{tag}.json")
         if a.prepare:
             prepare(spec, root)
             print(f"prepared {slug} -> {root}", flush=True)
@@ -104,7 +107,8 @@ def main():
         return
     table = md_table(summaries)
     print(table)
-    cmp_path = os.path.join(a.out_dir, "size_compare.json")
+    tag = f"-{a.tag}" if a.tag else ""
+    cmp_path = os.path.join(a.out_dir, f"size_compare{tag}.json")
     json.dump({"protocol": protocol["name"], "seeds": protocol["seeds"],
                "models": {slug: s for slug, s in summaries}}, open(cmp_path, "w"), indent=2)
     open(cmp_path.replace(".json", ".md"), "w", encoding="utf-8").write(
