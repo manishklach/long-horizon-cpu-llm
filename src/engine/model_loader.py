@@ -43,6 +43,6 @@ def load_model_and_tokenizer(name_or_path: str, dtype: str = "fp32",
         "n_layers": getattr(cfg, "num_hidden_layers", 12),
         "n_heads": getattr(cfg, "num_attention_heads", 12),
         "n_kv_heads": getattr(cfg, "num_key_value_heads", getattr(cfg, "num_attention_heads", 12)),
-        "head_dim": getattr(cfg, "hidden_size", 768) // getattr(cfg, "num_attention_heads", 12),
+        "head_dim": getattr(cfg, "head_dim", None) or getattr(cfg, "hidden_size", 768) // getattr(cfg, "num_attention_heads", 12),
         "hidden": getattr(cfg, "hidden_size", 768),
     }

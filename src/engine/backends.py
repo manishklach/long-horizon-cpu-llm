@@ -2,9 +2,7 @@
 
 - HFBackend: wraps CPUEngine (full single-pass + session cache).
 - LlamaCppBackend: loads .gguf via llama-cpp-python (CPU, n_threads auto).
-  llama.cpp already does the key CPU-friendly things: quantized weights in
-  RAM, KV cache reuse across turns (we keep session prompt history so only new
-  tokens are evaluated), small-batch decode.
+  Transcript history is retained, but per-session resident KV reuse is not measured.
 
 Auto-select: if model path ends with .gguf (or CPU_LLM_BACKEND=gguf) -> GGUF.
 
@@ -39,8 +37,11 @@ class HFBackend:
         from src.engine.inference import CPUEngine
         self.e = CPUEngine(model_id, max_seq_len=max_seq, quant_int8=quant_int8)
 
-    def generate(self, prompt, session_id="default", max_new_tokens=64, temperature=0.0):
-        return self.e.generate(prompt, session_id, max_new_tokens, temperature)
+    def generate(self, prompt, session_id="default", max_new_tokens=64, temperature=0.0, **kwargs):
+        return self.e.generate(prompt, session_id, max_new_tokens, temperature, **kwargs)
+
+    def generate_chat(self, messages, **kwargs):
+        return self.e.generate_chat(messages, **kwargs)
 
     def reset(self, sid):
         self.e.reset_session(sid)
@@ -68,6 +69,8 @@ class LlamaCppBackend:
         self.llm = Llama(model_path=model_path, n_ctx=n_ctx,
                          n_threads=n_threads or multiprocessing.cpu_count(),
                          n_gpu_layers=n_gpu_layers, verbose=verbose)
+        import threading
+        self.lock = threading.RLock()
         self.histories: Dict[str, List[dict]] = {}
         self.n_ctx = n_ctx
         self.model_path = model_path
@@ -75,35 +78,55 @@ class LlamaCppBackend:
     def _hist(self, sid: str) -> List[dict]:
         return self.histories.setdefault(sid, [])
 
-    def generate(self, prompt, session_id="default", max_new_tokens=64, temperature=0.0):
-        hist = self._hist(session_id)
-        # session cache: keep prior turns in the evaluated context, only the new
-        # user message is "incremental" work for the sampler loop
-        msgs = [*hist, {"role": "user", "content": prompt}]
-        t0 = time.perf_counter()
-        out = self.llm.create_chat_completion(
-            messages=msgs, max_tokens=max_new_tokens,
-            temperature=temperature, stream=False)
-        ttft = time.perf_counter() - t0  # llama.cpp lumps prefill+first token; reported as TTFT
-        text = out["choices"][0]["message"]["content"]
-        usage = out.get("usage", {})
-        hist.extend([{"role": "user", "content": prompt}, {"role": "assistant", "content": text}])
-        pt = usage.get("prompt_tokens", len(prompt.split()))
-        ct = usage.get("completion_tokens", max_new_tokens)
-        return {"text": text, "prompt_tokens": pt, "reused_tokens": sum(len(m["content"].split()) for m in hist[:-2]),
-                "generated_tokens": ct, "ttft_s": round(ttft, 4),
-                "tpot_s": round(ttft / max(ct, 1), 4),
-                "session_len": len(hist), "turn": len(hist) // 2}
+    def generate(self, prompt, session_id="default", max_new_tokens=64, temperature=0.0,
+                 prompt_mode="append"):
+        if prompt_mode not in ("append", "full"):
+            raise ValueError("prompt_mode must be append or full")
+        with self.lock:
+            history = self._hist(session_id) if prompt_mode == "append" else []
+            return self.generate_chat([*history, {"role": "user", "content": prompt}],
+                                      session_id, max_new_tokens, temperature)
+
+    def generate_chat(self, messages, session_id="default", max_new_tokens=64, temperature=0.0, on_text=None):
+        if max_new_tokens <= 0 or temperature < 0:
+            raise ValueError("invalid generation parameters")
+        with self.lock:
+            start = time.perf_counter()
+            # Native streaming supplies observable content-arrival latency.
+            chunks = self.llm.create_chat_completion(messages=messages, max_tokens=max_new_tokens,
+                                                       temperature=temperature, stream=True)
+            pieces, arrivals = [], []
+            finish = None
+            for chunk in chunks:
+                choice = chunk["choices"][0]
+                content = choice.get("delta", {}).get("content")
+                if content:
+                    pieces.append(content)
+                    arrivals.append(time.perf_counter())
+                    if on_text:
+                        on_text(content)
+                finish = choice.get("finish_reason") or finish
+            text = "".join(pieces)
+            self.histories[session_id] = [*messages, {"role": "assistant", "content": text}]
+            return {"text": text, "prompt_tokens": None, "reused_tokens": None,
+                    "generated_tokens": None,
+                    "ttft_s": arrivals[0] - start if arrivals else None,
+                    "tpot_s": None, "total_s": time.perf_counter() - start,
+                    "session_len": None, "turn": self.turns(session_id),
+                    "finish_reason": finish,
+                    "metrics_note": "TTFT is first content chunk; exact token usage and cache reuse unavailable."}
 
     def reset(self, sid):
-        self.histories.pop(sid, None)
+        with self.lock:
+            self.histories.pop(sid, None)
 
     def turns(self, sid: str) -> int:
         return len(self.histories.get(sid, [])) // 2
 
     def stats(self):
-        return {"backend": "llama.cpp-gguf", "model": self.model_path,
-                "n_ctx": self.n_ctx, "sessions": {k: len(v) for k, v in self.histories.items()}}
+        with self.lock:
+            return {"backend": "llama.cpp-gguf", "model": self.model_path,
+                    "n_ctx": self.n_ctx, "sessions": {k: len(v) for k, v in self.histories.items()}}
 
 
 def create_backend(model_id="tiny-opt-125m", max_seq=8192, quant_int8=False):
