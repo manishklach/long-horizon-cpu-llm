@@ -1,4 +1,4 @@
-"""OpenAI/vLLM-compatible FastAPI server (extra beyond eLLM core).
+"""OpenAI-compatible FastAPI server.
 
 Endpoints:
 - POST /v1/chat/completions  (OpenAI chat, stream + non-stream)
@@ -23,7 +23,7 @@ MODEL_ID = os.environ.get("CPU_LLM_MODEL", "tiny-opt-125m")
 MAX_SEQ = int(os.environ.get("CPU_LLM_MAX_SEQ", "8192"))
 QUANT = os.environ.get("CPU_LLM_INT8", "0") == "1"
 
-app = FastAPI(title="CPU-LLM-Inference (eLLM-style, +features)")
+app = FastAPI(title="CPU-LLM-Inference")
 engine = None
 
 

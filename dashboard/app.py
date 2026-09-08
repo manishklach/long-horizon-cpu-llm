@@ -12,7 +12,7 @@ from src.engine.quant import kv_bytes_estimate, model_bytes_estimate
 from src.bench.benchmark import run as bench_run
 
 st.set_page_config(page_title="CPU-LLM Inference", layout="wide")
-st.title("CPU-LLM Inference — eLLM-style + extras")
+st.title("CPU-LLM Inference")
 
 with st.sidebar:
     st.header("Engine")
@@ -72,7 +72,7 @@ with tab_bench:
             st.json(rows)
 
 with tab_mem:
-    st.write("DDR sizing for million-token contexts (the eLLM trade: storage for compute).")
+    st.write("DDR sizing for million-token contexts (trade storage for compute).")
     n_layers = st.number_input("layers", 1, 128, 12)
     n_kv = st.number_input("kv heads", 1, 64, 4)
     hd = st.number_input("head_dim", 16, 256, 64)

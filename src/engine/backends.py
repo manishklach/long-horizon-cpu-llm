@@ -1,8 +1,8 @@
 """Backend abstraction: same generate() API over HF transformers and GGUF/llama.cpp.
 
-- HFBackend: wraps CPUEngine (full single-pass + session cache, exact eLLM mirror).
+- HFBackend: wraps CPUEngine (full single-pass + session cache).
 - LlamaCppBackend: loads .gguf via llama-cpp-python (CPU, n_threads auto).
-  llama.cpp already does key things eLLM wants on CPU: quantized weights in
+  llama.cpp already does the key CPU-friendly things: quantized weights in
   RAM, KV cache reuse across turns (we keep session prompt history so only new
   tokens are evaluated), small-batch decode.
 

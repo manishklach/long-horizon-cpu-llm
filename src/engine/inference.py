@@ -1,13 +1,13 @@
 """Core CPU inference engine: full single-pass Prefill + Session Cache + small-batch Decode.
 
-eLLM ideas implemented here:
+Core design implemented here:
 - FULL prefill in one forward (no chunking) -> less repeated param loading.
 - INCREMENTAL prefill: reuse past_key_values + prefix match, only new tokens forwarded.
 - STATIC accounting via StaticKVCache (seq pointer, overflow guard).
 - SMALL batch (=1) decode -> each request gets full memory bandwidth.
 
 Uses HF transformers Cache natively for correctness; StaticKVCache mirrors
-logical length for eLLM-style accounting/persistence stats.
+logical length for static-cache accounting/persistence stats.
 """
 from __future__ import annotations
 import time
@@ -70,7 +70,7 @@ class CPUEngine:
 
     @torch.no_grad()
     def prefill_full(self, ids: List[int]) -> tuple[DynamicCache, float]:
-        """Single-pass full prefill (eLLM mode)."""
+        """Single-pass full prefill (no chunking)."""
         t0 = time.perf_counter()
         out = self._forward(torch.tensor([ids]), None)
         return out.past_key_values, time.perf_counter() - t0

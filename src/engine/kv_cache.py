@@ -1,7 +1,7 @@
-"""eLLM-style CPU inference — Python prototype.
+"""Long-horizon CPU inference — Python prototype.
 
 Static KV cache with dimension-first layout, preallocated max_seq.
-Mirrors eLLM's "elastic static graph + non-paged KV + massive-dim + session cache".
+Implements "elastic static graph + non-paged KV + massive-dim + session cache".
 Shape convention: [max_seq, n_kv_heads, head_dim] per layer, seq-dim first
 so reads along seq are contiguous (good spatial locality on CPU).
 """

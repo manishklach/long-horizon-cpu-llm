@@ -1,4 +1,4 @@
-"""Real 50K long-context test: eLLM-style full single-pass vs chunked.
+"""Real 50K long-context test: full single-pass vs chunked.
 
 Runs in 3 phases so it works on small CPU boxes AND big Linux servers:
 

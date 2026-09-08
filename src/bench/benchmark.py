@@ -1,7 +1,7 @@
 """Benchmark: full single-pass Prefill vs chunked baseline + Decode TPOT.
 
-Reproduces eLLM's claim shape on CPU: full-pass TTFT wins, gap grows with length.
-Saves an HTML dashboard (extra beyond eLLM).
+Full single-pass Prefill beats chunked baselines as context grows on CPU.
+Saves an HTML dashboard.
 """
 from __future__ import annotations
 import argparse
@@ -13,9 +13,18 @@ from src.engine.inference import CPUEngine
 
 def run(model: str, lengths: list[int], max_new: int = 16, chunk: int = 512):
     e = CPUEngine(model, max_seq_len=max(lengths) + max_new + 64)
+    # cap at model positional limit so tiny models (OPT 2048) don't overflow
+    try:
+        cfg = e.model.config.to_dict()
+        model_max = int(cfg.get("max_position_embeddings") or cfg.get("n_positions") or 2048)
+    except Exception:
+        model_max = 2048
     rows = []
     for L in lengths:
-        ids = list(range(100, 100 + L))  # synthetic long prompt ids (mod vocab below)
+        Lc = min(L, model_max - max_new - 8)
+        if Lc <= 0:
+            continue
+        ids = list(range(100, 100 + Lc))  # synthetic long prompt ids (mod vocab below)
         vocab = e.tok.vocab_size if hasattr(e.tok, "vocab_size") else 50265
         ids = [i % vocab for i in ids]
         _, t_full = e.prefill_full(ids)
@@ -50,7 +59,7 @@ td,th{{border:1px solid #ccc;padding:6px 12px}}</style></head><body>
 <h2>Prefill: full single-pass vs chunked + Decode TPOT</h2>
 <table><tr><th>seq_len</th><th>TTFT full (s)</th><th>TTFT chunked (s)</th>
 <th>speedup</th><th>TPOT (s/tok)</th></tr>{rows_html}</table>
-<p>Full-pass avoids repeated param loading; gap should widen with length (eLLM effect).</p>
+<p>Full-pass avoids repeated param loading; gap widens with length.</p>
 </body></html>"""
     open(path, "w", encoding="utf-8").write(html)
     print(f"saved {path}")

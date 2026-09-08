@@ -1,4 +1,4 @@
-"""Streaming chat client (like eLLM scripts/chat.py, OpenAI-compatible)."""
+"""Streaming chat client (OpenAI-compatible)."""
 import os
 import requests
 

@@ -1,4 +1,4 @@
-"""Long-horizon session memory + RAG injection (extra beyond eLLM).
+"""Long-horizon session memory + RAG injection.
 
 - Persistent session transcripts (JSONL per session).
 - RAG: prepend retrieved docs as context block, still benefits from

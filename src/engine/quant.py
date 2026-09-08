@@ -1,4 +1,4 @@
-"""Quantization + memory helpers (extra beyond eLLM baseline).
+"""Quantization + memory helpers.
 
 - Dynamic INT8 for CPU Linear layers (torch.ao, no calibration needed).
 - FP16/BF16 dtype selection.

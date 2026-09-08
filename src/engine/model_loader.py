@@ -1,4 +1,4 @@
-"""Multi-model loader (extra beyond eLLM's Qwen-only support)."""
+"""Multi-model loader (OPT, TinyLlama, Qwen, Phi, Llama, Mistral)."""
 from __future__ import annotations
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -12,7 +12,7 @@ MODEL_REGISTRY = {
     "phi-3-mini": "microsoft/Phi-3-mini-4k-instruct",
     "llama-3.2-1b": "meta-llama/Llama-3.2-1B-Instruct",
     "mistral-7b": "mistralai/Mistral-7B-Instruct-v0.2",
-    # full-size eLLM parity target (needs ~60GB+ RAM):
+    # full-size long-context target (needs ~60GB+ RAM):
     "qwen3-coder-30b": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
 }
 
@@ -31,7 +31,7 @@ def load_model_and_tokenizer(name_or_path: str, dtype: str = "fp32",
         tok.pad_token = tok.eos_token
     model = AutoModelForCausalLM.from_pretrained(
         mid,
-        torch_dtype=DTYPE_MAP.get(dtype, torch.float32),
+        dtype=DTYPE_MAP.get(dtype, torch.float32),
         trust_remote_code=trust_remote_code,
     )
     model.eval()

@@ -1,4 +1,4 @@
-"""Head-by-head attention (eLLM-style FlashAttention for CPU).
+"""Head-by-head attention (cache-friendly FlashAttention-style for CPU).
 
 Idea: basic unit = one token on one KV head. Finish one head fully before
 moving to the next, so that head's KV stays resident in L3 instead of being
