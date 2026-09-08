@@ -1,106 +1,89 @@
 # Long-horizon CPU LLM inference
 
-A CPU inference research prototype with Hugging Face and optional llama.cpp/GGUF backends.
-The working inference path uses Hugging Face's native KV cache. Static KV and head-by-head
-attention are standalone experiments; neither currently accelerates model generation.
+A CPU-only research prototype for persistent KV reuse, inference measurements, and long-context
+answer-quality evaluation. Includes Hugging Face and optional llama.cpp/GGUF backends, a basic
+chat API, a Streamlit dashboard, and reproducible experiments with raw results.
 
-## Current milestone: correct sessions and credible measurements
+**[v0.2.0](https://github.com/manishklach/long-horizon-cpu-llm/releases/tag/v0.2.0)** |
+[Documentation](docs/README.md) | [Results](docs/experiments/results/README.md) |
+[Roadmap](docs/ROADMAP.md) | [MIT license](LICENSE)
 
-- API chat uses the complete supplied message history and the tokenizer's chat template.
-  Models without a chat template use a plain role-labelled fallback (not an instruction-tuning guarantee).
-- Requests without `session_id` are independent and their cache is released afterward.
-- With `session_id`, send the complete conversation on every API request. The ID enables cache
-  reuse; it does not cause the server to append missing messages. Changed history safely recomputes.
-- Local `CPUEngine.generate` defaults to raw-token append mode. Use `prompt_mode="full"` for
-  authoritative prompts, or `generate_chat(messages, ...)` for templated conversations.
-- The final generated token remains pending in the cache, including EOS. Reported reused tokens
-  count only tokens actually cached. Context checks reserve the requested output before inference.
-- Reset removes both cached history and the turn count. Engine mutations are serialized.
-- Chat SSE receives text during decoding, with incomplete words buffered by the HF backend.
-  It is not one SSE event per token. A disconnected client currently does not cancel generation.
-- JSONL files are transcript logs, not restartable KV checkpoints. RAG accepts supplied documents;
-  retrieval itself is outside this prototype.
+## What works today
+
+- Full or incremental HF prefill, with verified token-prefix reuse and context bounds.
+- Complete-history chat requests, isolated anonymous sessions, reset, and streamed text.
+- CPU GGUF execution and a separate token-level evaluation runner.
+- Repeated prefill/generation measurements, model checksums, prompt-token parity checks,
+  hardware metadata, sampled RAM, and saved raw trials.
+- Retrieval-position, missing-record, growing-conversation, and explicit-ID controls.
+
+The HF inference path uses its native dynamic cache. Static KV and head-by-head attention
+remain standalone experiments; neither currently accelerates model generation. This repo
+does not establish that CPU inference beats GPUs, or that 50K-token generation is validated.
 
 ## Quickstart
 
+Python 3.11 was used for the published Windows CPU run. From a Python environment:
+
 ```powershell
-pip install -r requirements.txt
+git clone https://github.com/manishklach/long-horizon-cpu-llm.git
+cd long-horizon-cpu-llm
+python -m pip install -r requirements.txt
 python -m scripts.local_chat --model tiny-opt-125m
-python -m scripts.run_server
+```
+
+The tiny OPT model is a smoke-test model, not a strong assistant. For instruction chat, set
+`CPU_LLM_MODEL=qwen2.5-0.5b` and run the API; see [setup and examples](docs/getting-started.md).
+
+```powershell
+python -m pytest tests/ -q
+python -m uvicorn src.server.app:app --host 127.0.0.1 --port 8000
+# In another terminal:
 python -m scripts.chat
-pytest tests/ -q
-streamlit run dashboard/app.py
 ```
 
-Set `CPU_LLM_MODEL`, `CPU_LLM_MAX_SEQ`, and `CPU_LLM_INT8=1` to configure the API server.
-The API supports basic text chat/completion requests, not the entire OpenAI/vLLM API surface.
-Streaming errors are emitted as SSE error objects because response headers have already been sent.
-
-Optional GGUF backend:
+Models download on first use. Optional pinned CPU GGUF support:
 
 ```powershell
-pip install llama-cpp-python
-python scripts/run_gguf.py --model path/to/model.gguf --n-ctx 8192
+python -m pip install --only-binary=:all: -r requirements-eval.txt
+python -m src.bench.evaluate prepare
+python -m src.bench.recall_controls
 ```
 
-GGUF TTFT measures first content-chunk arrival. Exact token usage, TPOT and reused-token counts
-are currently returned as `null` rather than inferred from words or total request time.
-One llama.cpp instance is shared; separate transcript histories do not guarantee resident KV per session.
+The last command runs 12 real-model cases and can take many minutes on a laptop CPU.
+See [all experiment commands](docs/experiments/README.md).
 
-## Reproducible benchmark
+## Evidence, including failures
 
-```powershell
-python -m src.bench.benchmark --model tiny-opt-125m --lengths 128,512,1024,2000 --max-new 8 --chunk 512 --warmups 1 --repeats 5 --threads 4 --output bench_report.json
-```
+Published on one four-core/eight-thread Windows CPU, using four inference threads:
 
-The JSON and accompanying HTML contain:
+| Measurement | Observation |
+|---|---|
+| 2,030-token prompt, median TTFT | HF FP32: 15.823 s; GGUF Q4_K_M: 19.778 s |
+| Same prompt, median decode interval | HF: 0.1915 s/token; GGUF: 0.0320 s/token |
+| Same prompt, sampled process RSS peak | HF: 3.706 GiB; GGUF: 1.012 GiB |
+| Cached versus fresh generation | Identical output IDs in nine tested turn comparisons |
+| Three-seed follow-up control | Implicit reference: 0/3 correct; explicit record ID: 3/3 |
+| Three-seed absent-record control near 8K | 0/3 correct |
 
-- Actual and requested prompt lengths; unsupported prompt-plus-output lengths are explicitly skipped.
-- Full/chunked prefill medians, standard deviations and raw trials, with alternating execution order.
-- Separate generation TTFT (through first sampled token) and TPOT (between subsequent tokens).
-  TPOT is `null` when generation emits only one token.
-- CPU/platform, thread count, RAM and dependency versions.
-- Whole-process RSS sampled every 5 ms, including model weights. Brief peaks can be missed;
-  allocator retention and earlier runs affect the baseline. This is not isolated per-method peak memory.
+Runtime and weight precision both differ in the backend comparison. The quality cases are
+small synthetic diagnostics, not general reliability scores. Faster cache reuse preserved
+outputs but did not fix wrong answers. [Read the methods, raw results, and limits](docs/experiments/results/README.md).
 
-Inputs are synthetic token IDs. These timings do not demonstrate long-context answer quality.
-The previous OPT-125M table was a single-run exploratory result; it is not retained as evidence of
-an architectural speedup. Full and chunked prefill use the same resident model; the harness does
-not measure weight traffic and cannot attribute differences to parameter loading.
+## API and research scope
 
-## Research limits and next experiments
+When using `session_id`, send the **complete conversation** on every chat request. The ID
+allows prefix reuse; it does not append omitted messages. Requests without an ID are independent.
+See the [API contract and v0.1 migration notes](docs/api.md).
 
-`tests/test_long_context_50k.py` verifies 50K allocation with small dimensions. Its attention
-comparison uses a 512-token slice. These are not 50K model-generation or quality results.
-The legacy `scripts/long_context_test.py` is a diagnostic; use the benchmark above for repeated timing.
+The model in the published evaluation supports 32,768 configured context tokens; the experiments
+here do not validate 32K or 50K quality. The 50K test checks allocation with small dimensions.
+Transcript logs are not persistent KV checkpoints, and RAG currently injects supplied documents
+without implementing retrieval. The API is a local research server, not a production service.
 
-Next: compare against a pinned GGUF baseline, evaluate fact retrieval and growing conversations at
-verified model context lengths, then profile before integrating one optimization for one architecture.
-A 50K FP32 attention score matrix alone is 10 GB per head. The experimental attention implementation
-materializes this matrix; tiled attention is needed before treating it as a scalable kernel.
-KV sizing excludes weights, activations and attention workspace. Model context support must be
-verified independently of available RAM.
+## Contributing and next work
 
-## Validation
-
-Tests include a small randomly initialized OPT model (no model downloads) for cached/uncached
-output equivalence, changed-history recomputation, EOS alignment, reset, limits, streaming text,
-and full/chunked prefill equivalence; API isolation/history and benchmark-label tests are also included.
-These tests establish implementation behavior, not pretrained model quality or hardware performance.
-
-MIT licensed. See [LICENSE](LICENSE).
-
-## Pinned GGUF and quality evaluation
-
-The next milestone adds token-matched HF FP32 / official GGUF Q4_K_M baselines,
-seeded retrieval-position and absent-record cases, and cached/fresh growing-conversation
-checks. Model revisions, checksums and the optional native runtime are pinned.
-
-See [evaluation setup and commands](docs/experiments/README.md). The default quality
-sweep covers prompt budgets of 512, 4096 and 8192 tokens; it does not claim 50K support.
-
-[Measured results and failure cases](docs/experiments/results/README.md) include a real
-8K retrieval sweep and growing conversations, with raw reports checked in.
-
-[Multi-seed recall controls](docs/experiments/recall-controls.md) replicate the follow-up
-failure and test explicit record IDs, with all outcomes and raw data published.
+Run the 23-test download-free suite before changing inference or evaluation behavior. Keep model
+revisions and protocols fixed before measuring, and publish failures alongside successes.
+See [architecture](docs/architecture.md), [the next PR proposal](docs/ROADMAP.md), and
+[release notes](docs/releases/v0.2.0.md).

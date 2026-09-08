@@ -83,8 +83,9 @@ prefill also materializes large logits tensors; use conservative lengths until t
 
 ## Extending the evidence
 
-A next replication should use multiple predeclared seeds and additional prompt families,
-then add a matched-precision control (for example GGUF F16 versus HF FP16, where supported).
+The three-seed recall replication is complete; see the controls linked below. The next
+comparison should add a stronger model and held-out seeds, as described in the
+[roadmap](../ROADMAP.md), followed by additional prompt families and matched-precision controls.
 Keep precision, context, prompt IDs, thread counts and output lengths explicit. Run backends
 in alternating process order across replications to assess host-load and thermal effects;
 the initial runs execute one backend after the other and cannot remove those effects.
