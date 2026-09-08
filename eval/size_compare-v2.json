@@ -1,0 +1,56 @@
+{
+  "protocol": "multiseed-recall-controls-v2-8k-matched",
+  "seeds": [
+    1000033,
+    1000037,
+    1000039
+  ],
+  "models": {
+    "qwen2.5-0.5b": {
+      "cases": 12,
+      "initial": [
+        3,
+        3
+      ],
+      "implicit_cond": [
+        3,
+        3
+      ],
+      "explicit_cond": [
+        3,
+        3
+      ],
+      "absent": [
+        1,
+        3
+      ],
+      "ttft_median_s": 103.5401,
+      "tpot_median_s": 0.041,
+      "tpot_n": 12,
+      "peak_rss_gib": 1.433
+    },
+    "qwen2.5-1.5b": {
+      "cases": 12,
+      "initial": [
+        3,
+        3
+      ],
+      "implicit_cond": [
+        3,
+        3
+      ],
+      "explicit_cond": [
+        3,
+        3
+      ],
+      "absent": [
+        3,
+        3
+      ],
+      "ttft_median_s": 176.9522,
+      "tpot_median_s": 0.0763,
+      "tpot_n": 12,
+      "peak_rss_gib": 2.744
+    }
+  }
+}
