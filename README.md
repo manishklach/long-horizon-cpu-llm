@@ -89,3 +89,15 @@ and full/chunked prefill equivalence; API isolation/history and benchmark-label 
 These tests establish implementation behavior, not pretrained model quality or hardware performance.
 
 MIT licensed. See [LICENSE](LICENSE).
+
+## Pinned GGUF and quality evaluation
+
+The next milestone adds token-matched HF FP32 / official GGUF Q4_K_M baselines,
+seeded retrieval-position and absent-record cases, and cached/fresh growing-conversation
+checks. Model revisions, checksums and the optional native runtime are pinned.
+
+See [evaluation setup and commands](docs/experiments/README.md). The default quality
+sweep covers prompt budgets of 512, 4096 and 8192 tokens; it does not claim 50K support.
+
+[Measured results and failure cases](docs/experiments/results/README.md) include a real
+8K retrieval sweep and growing conversations, with raw reports checked in.
