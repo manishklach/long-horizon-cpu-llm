@@ -1,97 +1,91 @@
-# CPU-LLM-Inference — long-horizon inference on CPUs
+# Long-horizon CPU LLM inference
 
-Python prototype for long-horizon CPU inference:
-**"trade storage for computation"** — use CPU DDR capacity to beat GPU HBM on long-horizon inference.
+A CPU inference research prototype with Hugging Face and optional llama.cpp/GGUF backends.
+The working inference path uses Hugging Face's native KV cache. Static KV and head-by-head
+attention are standalone experiments; neither currently accelerates model generation.
 
-## Core design
-- **Full single-pass Prefill** — no chunking, params loaded once (`CPUEngine.prefill_full`)
-- **Incremental Prefill / Session Cache** — keep KV across turns, forward only new tokens (`CPUEngine.generate` + prefix reuse)
-- **Static-shape non-paged KV** — preallocated `[max_seq, H_kv, D]`, seq-dim first (`StaticKVCache`)
-- **Small-batch Decode** — batch=1, more bandwidth per request
-- **Head-by-head attention** — CPU-cache-friendly SDPA (`attention_head_by_head`)
+## Current milestone: correct sessions and credible measurements
 
-## Features
-1. **OpenAI / vLLM-compatible server** — `/v1/chat/completions` (streaming), `/v1/completions`, `/v1/rag/chat`, `/metrics`
-2. **Quant + dtype** — dynamic INT8 (`CPU_LLM_INT8=1`), fp16/bf16, KV memory estimator
-3. **Long-horizon memory** — persistent JSONL sessions, RAG injection helper
-4. **Benchmark + HTML dashboard** — full vs chunked TTFT, TPOT, speedup table
-5. **Multi-model** — opt-125m, TinyLlama-1.1B, Qwen2.5-0.5B, Qwen3-0.6B/30B, Phi-3-mini, Llama-3.2-1B, Mistral-7B
+- API chat uses the complete supplied message history and the tokenizer's chat template.
+  Models without a chat template use a plain role-labelled fallback (not an instruction-tuning guarantee).
+- Requests without `session_id` are independent and their cache is released afterward.
+- With `session_id`, send the complete conversation on every API request. The ID enables cache
+  reuse; it does not cause the server to append missing messages. Changed history safely recomputes.
+- Local `CPUEngine.generate` defaults to raw-token append mode. Use `prompt_mode="full"` for
+  authoritative prompts, or `generate_chat(messages, ...)` for templated conversations.
+- The final generated token remains pending in the cache, including EOS. Reported reused tokens
+  count only tokens actually cached. Context checks reserve the requested output before inference.
+- Reset removes both cached history and the turn count. Engine mutations are serialized.
+- Chat SSE receives text during decoding, with incomplete words buffered by the HF backend.
+  It is not one SSE event per token. A disconnected client currently does not cancel generation.
+- JSONL files are transcript logs, not restartable KV checkpoints. RAG accepts supplied documents;
+  retrieval itself is outside this prototype.
 
-## Quickstart (Windows CPU OK)
+## Quickstart
+
 ```powershell
 pip install -r requirements.txt
-# 1) local chat, no server (downloads ~250MB tiny model on first run)
-python scripts/local_chat.py --model tiny-opt-125m
-# 2) API server
-python scripts/run_server.py
-python scripts/chat.py
-# 3) benchmark full vs chunked
-python -m src.bench.benchmark --model tiny-opt-125m --lengths 128,512,1024,2000 --max-new 8
-# 4) tests (no download)
-pytest tests/ -v
-# 5) 50K long-context test (A+B no model, C capped to model max)
-python scripts/long_context_test.py --seq-len 1024 --skip-model
-python scripts/long_context_test.py --model tiny-opt-125m --seq-len 2048
-# 6) GGUF quantized backend (optional)
-pip install llama-cpp-python
-python scripts/run_gguf.py --model path/to/qwen2.5-0.5b-instruct-q4_k_m.gguf --n-ctx 8192
-# 7) Streamlit dashboard
+python -m scripts.local_chat --model tiny-opt-125m
+python -m scripts.run_server
+python -m scripts.chat
+pytest tests/ -q
 streamlit run dashboard/app.py
 ```
 
-Env: `CPU_LLM_MODEL=tinyllama-1.1b CPU_LLM_MAX_SEQ=8192 CPU_LLM_INT8=1 python scripts/run_server.py`
+Set `CPU_LLM_MODEL`, `CPU_LLM_MAX_SEQ`, and `CPU_LLM_INT8=1` to configure the API server.
+The API supports basic text chat/completion requests, not the entire OpenAI/vLLM API surface.
+Streaming errors are emitted as SSE error objects because response headers have already been sent.
 
-## Benchmark results (OPT-125M, Windows CPU, real run)
+Optional GGUF backend:
 
-Full single-pass prefill vs chunked baseline (`chunk=512`, `max_new=8`).
-Chunking wins at tiny lengths; full-pass wins once the prompt gets long
-(no repeated parameter loading).
-
-| seq_len | TTFT full (s) | TTFT chunked (s) | speedup | TPOT (s/tok) |
-|---------|---------------|------------------|---------|--------------|
-| 128     | 0.2624        | 0.2490           | 0.95x   | 0.0568       |
-| 512     | 1.0271        | 0.9011           | 0.88x   | 0.0462       |
-| 1024    | 1.7595        | 2.1039           | 1.20x   | 0.0599       |
-| 2000    | 3.7719        | 4.3619           | 1.16x   | 0.0709       |
-
-Reproduce: `python -m src.bench.benchmark --model tiny-opt-125m --lengths 128,512,1024,2000 --max-new 8`
-
-![benchmark chart](docs/benchmark.png)
-
-## Dashboard
-
-`streamlit run dashboard/app.py` — three tabs:
-
-- **Chat (session cache)** — multi-turn chat with TTFT/TPOT + reused-token stats
-- **Benchmark** — reruns the table/chart above live on your box
-- **Long-context memory** — DDR sizer + one-click 50K static-cache check
-
-![dashboard benchmark view](docs/benchmark.png)
-
-## Layout
-```
-src/engine/kv_cache.py    static KV, dimension-first
-src/engine/attention.py   head-by-head vs batched
-src/engine/inference.py   CPUEngine: full/incremental prefill + decode
-src/engine/quant.py       INT8 + memory estimates
-src/engine/model_loader.py registry (Qwen/Llama/Mistral/Phi/OPT)
-src/server/app.py         FastAPI OpenAI-compatible (HF + GGUF via CPU_LLM_MODEL=.gguf)
-src/memory/session_store.py persistence + RAG
-src/bench/benchmark.py    TTFT/TPOT + HTML report
-src/engine/backends.py    HFBackend + LlamaCppBackend factory
-scripts/long_context_test.py  50K 3-phase test (static + attention + model)
-scripts/run_gguf.py       GGUF chat
-dashboard/app.py          Streamlit: chat, bench, memory
+```powershell
+pip install llama-cpp-python
+python scripts/run_gguf.py --model path/to/model.gguf --n-ctx 8192
 ```
 
-## Notes on scaling
+GGUF TTFT measures first content-chunk arrival. Exact token usage, TPOT and reused-token counts
+are currently returned as `null` rather than inferred from words or total request time.
+One llama.cpp instance is shared; separate transcript histories do not guarantee resident KV per session.
 
-- For 50K-token single-pass on 30B models you need a big Linux CPU box
-  This is a **correct, runnable Python implementation** of these ideas on small models.
-  For 30B: use `qwen3-coder-30b` model id on a big Linux CPU box with `--max-seq 50000`.
-- Correctness first: uses HF `DynamicCache` for logits; `StaticKVCache` mirrors accounting.
-  Swap in `attention_head_by_head` as a drop-in kernel experiment (see tests).
+## Reproducible benchmark
 
-## License
+```powershell
+python -m src.bench.benchmark --model tiny-opt-125m --lengths 128,512,1024,2000 --max-new 8 --chunk 512 --warmups 1 --repeats 5 --threads 4 --output bench_report.json
+```
 
-MIT — see [LICENSE](LICENSE).
+The JSON and accompanying HTML contain:
+
+- Actual and requested prompt lengths; unsupported prompt-plus-output lengths are explicitly skipped.
+- Full/chunked prefill medians, standard deviations and raw trials, with alternating execution order.
+- Separate generation TTFT (through first sampled token) and TPOT (between subsequent tokens).
+  TPOT is `null` when generation emits only one token.
+- CPU/platform, thread count, RAM and dependency versions.
+- Whole-process RSS sampled every 5 ms, including model weights. Brief peaks can be missed;
+  allocator retention and earlier runs affect the baseline. This is not isolated per-method peak memory.
+
+Inputs are synthetic token IDs. These timings do not demonstrate long-context answer quality.
+The previous OPT-125M table was a single-run exploratory result; it is not retained as evidence of
+an architectural speedup. Full and chunked prefill use the same resident model; the harness does
+not measure weight traffic and cannot attribute differences to parameter loading.
+
+## Research limits and next experiments
+
+`tests/test_long_context_50k.py` verifies 50K allocation with small dimensions. Its attention
+comparison uses a 512-token slice. These are not 50K model-generation or quality results.
+The legacy `scripts/long_context_test.py` is a diagnostic; use the benchmark above for repeated timing.
+
+Next: compare against a pinned GGUF baseline, evaluate fact retrieval and growing conversations at
+verified model context lengths, then profile before integrating one optimization for one architecture.
+A 50K FP32 attention score matrix alone is 10 GB per head. The experimental attention implementation
+materializes this matrix; tiled attention is needed before treating it as a scalable kernel.
+KV sizing excludes weights, activations and attention workspace. Model context support must be
+verified independently of available RAM.
+
+## Validation
+
+Tests include a small randomly initialized OPT model (no model downloads) for cached/uncached
+output equivalence, changed-history recomputation, EOS alignment, reset, limits, streaming text,
+and full/chunked prefill equivalence; API isolation/history and benchmark-label tests are also included.
+These tests establish implementation behavior, not pretrained model quality or hardware performance.
+
+MIT licensed. See [LICENSE](LICENSE).

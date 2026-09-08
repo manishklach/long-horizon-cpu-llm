@@ -5,6 +5,7 @@ Env:  CPU_LLM_MODEL=tiny-opt-125m  (or a .gguf path for llama.cpp)
 """
 import json
 import time
+import uuid
 import streamlit as st
 
 from src.engine.backends import create_backend, is_gguf_target
@@ -37,8 +38,10 @@ except Exception as e:
 tab_chat, tab_bench, tab_mem = st.tabs(["Chat (session cache)", "Benchmark", "Long-context memory"])
 
 with tab_chat:
-    sid = st.text_input("session_id", value="dash")
-    q = st.text_area("You", value="Explain why full single-pass prefill beats chunking on CPUs.")
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = uuid.uuid4().hex
+    sid = st.text_input("session_id", value=st.session_state.session_id)
+    q = st.text_area("You", value="Explain the tradeoffs of full and chunked prefill on CPUs.")
     c1, c2 = st.columns(2)
     max_new = c1.slider("max_new_tokens", 8, 512, 96)
     temp = c2.slider("temperature", 0.0, 1.5, 0.0)
@@ -50,7 +53,7 @@ with tab_chat:
         st.json({k: o[k] for k in ("prompt_tokens", "reused_tokens", "generated_tokens",
                                    "ttft_s", "tpot_s", "session_len", "turn")})
         st.caption(f"wall {time.perf_counter()-t0:.2f}s — incremental prefill reused "
-                   f"{o['reused_tokens']} tokens (no recompute)")
+                   f"{o['reused_tokens']} cached tokens")
     if st.button("Reset session"):
         eng.reset(sid)
         st.info(f"session {sid} reset")
@@ -67,7 +70,7 @@ with tab_bench:
             with st.spinner("benchmarking..."):
                 rows = bench_run(eng.e.model_name if hasattr(eng, "e") else model,
                                  Ls, max_new=16, chunk=int(chunk))
-            st.line_chart([{"full": r["ttft_full_s"], "chunked": r["ttft_chunked_s"]} for r in rows])
+            st.line_chart([{"full": r["prefill_full_s"], "chunked": r["prefill_chunked_s"]} for r in rows if r["status"] == "ok"])
             st.table(rows)
             st.json(rows)
 
@@ -79,8 +82,8 @@ with tab_mem:
     seq = st.number_input("context tokens", 1000, 1000000, 50000, step=1000)
     gb = kv_bytes_estimate(int(n_layers), int(n_kv), int(hd), int(seq)) / 1e9
     st.metric("KV cache @FP16 (GB)", f"{gb:.2f}")
-    st.caption("Static preallocation: reserve once, never rebuild the graph. "
-               "If this fits your DDR, you can run full single-pass prefill at this length.")
+    st.caption("Static buffer capacity estimate. "
+               "This estimates KV only; weights, attention workspace, and model context limits also matter.")
     if st.button("Run 50K-shape check (no model)"):
         from scripts.long_context_test import phase_a_static_50k, phase_b_attention_long
         with st.spinner("filling 50K static cache..."):

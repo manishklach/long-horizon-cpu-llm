@@ -1,21 +1,11 @@
-"""Core CPU inference engine: full single-pass Prefill + Session Cache + small-batch Decode.
-
-Core design implemented here:
-- FULL prefill in one forward (no chunking) -> less repeated param loading.
-- INCREMENTAL prefill: reuse past_key_values + prefix match, only new tokens forwarded.
-- STATIC accounting via StaticKVCache (seq pointer, overflow guard).
-- SMALL batch (=1) decode -> each request gets full memory bandwidth.
-
-Uses HF transformers Cache natively for correctness; StaticKVCache mirrors
-logical length for static-cache accounting/persistence stats.
-"""
+"""CPU inference with exact prefix reuse; static KV remains a separate experiment."""
 from __future__ import annotations
 import time
+import threading
 import torch
 from typing import Dict, List, Optional
 from transformers import DynamicCache
 
-from .kv_cache import StaticKVCache
 from .model_loader import load_model_and_tokenizer
 from .quant import apply_dynamic_int8
 
@@ -25,16 +15,16 @@ class Session:
         self.sid = sid
         self.input_ids: List[int] = []   # full history ids (prompt+generated)
         self.cache: Optional[DynamicCache] = None
-        self.static: Optional[StaticKVCache] = None
         self.turns = 0
 
 
 class CPUEngine:
     def __init__(self, model_name: str = "tiny-opt-125m", max_seq_len: int = 8192,
                  dtype: str = "fp32", quant_int8: bool = False, threads: int | None = None):
+        if max_seq_len <= 0:
+            raise ValueError("max_seq_len must be positive")
         if threads:
             torch.set_num_threads(threads)
-        torch.set_grad_enabled(False)
         self.model_name = model_name
         self.max_seq_len = max_seq_len
         self.model, self.tok, self.info = load_model_and_tokenizer(model_name, dtype)
@@ -42,26 +32,20 @@ class CPUEngine:
             self.model = apply_dynamic_int8(self.model)
         self.model.eval()
         self.sessions: Dict[str, Session] = {}
-        self.static_proto = StaticKVCache(
-            self.info["n_layers"], self.info["n_kv_heads"], self.info["head_dim"],
-            max_seq_len, torch.float32)
+        self.lock = threading.RLock()
+        limit = getattr(self.model.config, "max_position_embeddings", None) or getattr(self.model.config, "n_positions", max_seq_len)
+        self.max_seq_len = min(max_seq_len, limit)
 
     # ---------- sessions ----------
     def get_session(self, sid: str) -> Session:
         if sid not in self.sessions:
             s = Session(sid)
-            # fresh static mirror
-            import copy
-            s.static = StaticKVCache(self.info["n_layers"], self.info["n_kv_heads"],
-                                     self.info["head_dim"], self.max_seq_len)
             self.sessions[sid] = s
         return self.sessions[sid]
 
     def reset_session(self, sid: str):
-        if sid in self.sessions:
-            self.sessions[sid].cache = None
-            self.sessions[sid].input_ids = []
-            self.sessions[sid].static.reset()
+        with self.lock:
+            self.sessions.pop(sid, None)
 
     # ---------- prefill modes ----------
     @torch.no_grad()
@@ -71,13 +55,17 @@ class CPUEngine:
     @torch.no_grad()
     def prefill_full(self, ids: List[int]) -> tuple[DynamicCache, float]:
         """Single-pass full prefill (no chunking)."""
+        self._validate_prefill(ids)
         t0 = time.perf_counter()
         out = self._forward(torch.tensor([ids]), None)
         return out.past_key_values, time.perf_counter() - t0
 
     @torch.no_grad()
     def prefill_chunked(self, ids: List[int], chunk: int = 512) -> tuple[DynamicCache, float]:
-        """Chunked baseline (like vLLM/SGLang chunked prefill) for comparison."""
+        """Chunked HF baseline using the same resident model."""
+        self._validate_prefill(ids)
+        if chunk <= 0:
+            raise ValueError("chunk must be positive")
         t0 = time.perf_counter()
         cache = None
         for i in range(0, len(ids), chunk):
@@ -85,91 +73,88 @@ class CPUEngine:
             cache = out.past_key_values
         return cache, time.perf_counter() - t0
 
-    @staticmethod
-    def _common_prefix(a: List[int], b: List[int]) -> int:
-        n = min(len(a), len(b))
-        i = 0
-        while i < n and a[i] == b[i]:
-            i += 1
-        return i
+    def _validate_prefill(self, ids):
+        if not ids or len(ids) > self.max_seq_len:
+            raise ValueError("prefill must be nonempty and fit the context limit")
 
-    # ---------- generation with session cache ----------
-    @torch.no_grad()
-    def generate(self, prompt: str, session_id: str = "default", max_new_tokens: int = 64,
-                 temperature: float = 0.0, top_p: float = 1.0) -> dict:
-        s = self.get_session(session_id)
-        new_ids = self.tok.encode(prompt, add_special_tokens=(len(s.input_ids) == 0))
-        # prefix match -> incremental prefill on suffix only (no recompute)
-        if s.cache is not None and s.input_ids:
-            # candidate full = history + new prompt ids
-            full = s.input_ids + new_ids
-            # cache already covers len(s.input_ids); incremental = new_ids only
-            reuse = len(s.input_ids)
-            t0 = time.perf_counter()
-            out = self._forward(torch.tensor([new_ids]), s.cache)
-            ttft = time.perf_counter() - t0
-            s.cache = out.past_key_values
-            s.input_ids = full
-            try:
-                s.static.commit(len(new_ids))
-            except AssertionError:
-                pass
-            prompt_tokens = len(new_ids)
+    def generate_chat(self, messages, **kwargs):
+        if self.tok.chat_template:
+            ids = self.tok.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
         else:
-            # first turn: full single-pass prefill
-            t0 = time.perf_counter()
-            out = self._forward(torch.tensor([new_ids]), None)
-            ttft = time.perf_counter() - t0
-            s.cache = out.past_key_values
-            s.input_ids = list(new_ids)
-            try:
-                s.static.commit(len(new_ids))
-            except AssertionError:
-                pass
-            prompt_tokens = len(new_ids)
-            reuse = 0
+            text = "\n".join(f"{m['role']}: {m['content']}" for m in messages) + "\nassistant:"
+            ids = self.tok.encode(text, add_special_tokens=True)
+        return self.generate(ids, prompt_mode="full", **kwargs)
 
-        logits = out.logits[0, -1]
-        gen_ids: List[int] = []
-        t_dec0 = time.perf_counter()
-        for _ in range(max_new_tokens):
-            if temperature and temperature > 0:
-                probs = torch.softmax(logits / max(temperature, 1e-6), dim=-1)
-                if top_p < 1.0:
-                    sp, idx = torch.sort(probs, descending=True)
-                    cum = torch.cumsum(sp, dim=-1)
-                    cut = (cum > top_p).nonzero()
-                    if len(cut):
-                        sp[cut[0].item() + 1:] = 0
-                        sp /= sp.sum()
-                        probs = torch.zeros_like(probs).scatter_(-1, idx, sp)
-                nxt = int(torch.multinomial(probs, 1))
-            else:
-                nxt = int(torch.argmax(logits))
-            gen_ids.append(nxt)
-            s.input_ids.append(nxt)
-            if nxt == self.tok.eos_token_id:
-                break
-            o = self._forward(torch.tensor([[nxt]]), s.cache)
-            s.cache = o.past_key_values
-            logits = o.logits[0, -1]
+    @torch.no_grad()
+    def generate(self, prompt, session_id="default", max_new_tokens=64,
+                 temperature=0.0, top_p=1.0, prompt_mode="append", on_text=None):
+        """Append raw text locally; full mode accepts authoritative token history.
+
+        After generation the final token is pending: cache covers input_ids[:-1].
+        This also holds for EOS, which is evaluated on the next turn.
+        """
+        if max_new_tokens <= 0 or temperature < 0 or not 0 < top_p <= 1:
+            raise ValueError("invalid generation parameters")
+        if prompt_mode not in ("append", "full"):
+            raise ValueError("prompt_mode must be append or full")
+        with self.lock:
+            s = self.get_session(session_id)
+            ids = (self.tok.encode(prompt, add_special_tokens=prompt_mode == "full" or not s.input_ids)
+                   if isinstance(prompt, str) else list(prompt))
+            if not ids:
+                raise ValueError("prompt must contain tokens")
+            full = s.input_ids + ids if prompt_mode == "append" else ids
+            if len(full) + max_new_tokens > self.max_seq_len:
+                raise ValueError(f"context overflow: {len(full)} + {max_new_tokens} > {self.max_seq_len}")
+            cached = s.input_ids[:-1]
+            reuse = len(cached) if s.cache is not None and full[:len(cached)] == cached and len(full) > len(cached) else 0
+            cache = s.cache if reuse else None
+            start = time.perf_counter()
+            gen_ids, arrivals = [], []
+            emitted = ""
             try:
-                s.static.commit(1)
-            except AssertionError:
-                pass
-        tpot = (time.perf_counter() - t_dec0) / max(len(gen_ids), 1)
-        s.turns += 1
-        return {
-            "text": self.tok.decode(gen_ids, skip_special_tokens=True),
-            "prompt_tokens": prompt_tokens,
-            "reused_tokens": reuse if s.turns > 1 else 0,
-            "generated_tokens": len(gen_ids),
-            "ttft_s": round(ttft, 4),
-            "tpot_s": round(tpot, 4),
-            "session_len": len(s.input_ids),
-            "turn": s.turns,
-        }
+                out = self._forward(torch.tensor([full[reuse:]]), cache)
+                cache, logits = out.past_key_values, out.logits[0, -1]
+                for i in range(max_new_tokens):
+                    if temperature > 0:
+                        probs = torch.softmax(logits / temperature, dim=-1)
+                        if top_p < 1:
+                            sp, idx = torch.sort(probs, descending=True)
+                            sp[torch.cumsum(sp, -1) - sp >= top_p] = 0
+                            probs = torch.zeros_like(probs).scatter_(-1, idx, sp / sp.sum())
+                        nxt = int(torch.multinomial(probs, 1))
+                    else:
+                        nxt = int(torch.argmax(logits))
+                    gen_ids.append(nxt)
+                    arrivals.append(time.perf_counter())
+                    if on_text:
+                        decoded = self.tok.decode(gen_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+                        # Keep an incomplete word/UTF-8 tail until it is stable.
+                        boundary = max(decoded.rfind(" "), decoded.rfind("\n")) + 1
+                        stable = decoded[:boundary]
+                        if stable.startswith(emitted) and len(stable) > len(emitted):
+                            on_text(stable[len(emitted):])
+                            emitted = stable
+                    if nxt == self.tok.eos_token_id or i + 1 == max_new_tokens:
+                        break
+                    out = self._forward(torch.tensor([[nxt]]), cache)
+                    cache, logits = out.past_key_values, out.logits[0, -1]
+            except Exception:
+                self.sessions.pop(session_id, None)
+                raise
+            decoded = self.tok.decode(gen_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+            if on_text and decoded.startswith(emitted):
+                on_text(decoded[len(emitted):])
+            s.cache, s.input_ids = cache, full + gen_ids
+            s.turns += 1
+            return {"text": self.tok.decode(gen_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False),
+                    "prompt_tokens": len(full), "reused_tokens": reuse,
+                    "generated_tokens": len(gen_ids), "ttft_s": arrivals[0] - start,
+                    "tpot_s": (arrivals[-1] - arrivals[0]) / (len(arrivals) - 1) if len(arrivals) > 1 else None,
+                    "session_len": len(s.input_ids), "turn": s.turns,
+                    "finish_reason": "stop" if gen_ids[-1] == self.tok.eos_token_id else "length"}
 
     def stats(self) -> dict:
-        return {"model": self.info, "max_seq": self.max_seq_len,
-                "sessions": {k: {"len": len(v.input_ids), "turns": v.turns} for k, v in self.sessions.items()}}
+        with self.lock:
+            return {"model": self.info, "max_seq": self.max_seq_len,
+                    "sessions": {k: {"len": len(v.input_ids), "turns": v.turns} for k, v in self.sessions.items()}}

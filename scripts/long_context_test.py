@@ -90,8 +90,8 @@ def phase_c_model(model_id: str, seq: int, max_new=16, chunk=512):
                                e.info["head_dim"], seq) / 1e9
     return {"phase": "C-model", "model": model_id, "requested_seq": seq,
             "ran_seq": run_seq, "capped_to_model_max": capped,
-            "model_max_pos": int(model_max), "ttft_full_s": round(t_full, 4),
-            "ttft_chunked_s": round(t_chunk, 4),
+            "model_max_pos": int(model_max), "prefill_full_s": round(t_full, 4),
+            "prefill_chunked_s": round(t_chunk, 4),
             "speedup_full_vs_chunked": round(t_chunk / max(t_full, 1e-9), 2),
             "turns": [r1["ttft_s"], r2["ttft_s"], r3["ttft_s"]],
             "incremental_reuse_t2": r2["reused_tokens"],

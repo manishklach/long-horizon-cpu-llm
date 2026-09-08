@@ -26,3 +26,6 @@ Thumbs.db
 
 # Streamlit
 .streamlit/
+
+bench_report.json
+bench_report.json.html
