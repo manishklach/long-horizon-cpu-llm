@@ -1,0 +1,16 @@
+{
+  "name": "multiseed-recall-controls-v1",
+  "seeds": [17, 29, 41],
+  "initial_budget": 4096,
+  "absent_budget": 8192,
+  "position": 0.1,
+  "context": 16384,
+  "max_new": 24,
+  "threads": 4,
+  "batch": 512,
+  "backend": "gguf",
+  "expected_cases": 12,
+  "hypothesis": "Explicit record IDs may improve follow-up recall; missing-record failures may persist across seeds.",
+  "design": "Each seed has one initial positive retrieval, two paired follow-ups sharing its actual assistant response, and one absent-record control. Every generation starts with a fresh cache. Follow-up order alternates by seed. Seed 17 replicates the original setup; seeds 29 and 41 are new. No prompt tuning after observing results.",
+  "scoring": "Use the existing case-insensitive exact-answer normalization. Report all cases and paired follow-up outcomes conditional on correct initial retrieval. Errors are not scored as incorrect answers."
+}

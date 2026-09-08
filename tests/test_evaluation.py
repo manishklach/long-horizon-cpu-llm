@@ -115,3 +115,45 @@ def test_tokenizer_mismatch_stops_comparison():
     runner.llm = SimpleNamespace(tokenize=lambda *a, **kw: [1, 3])
     with pytest.raises(ValueError, match='tokenizer mismatch'):
         runner.check_prompt({'prompt': 'example', 'input_ids': [1, 2]})
+
+
+def test_followup_pair_changes_only_reference():
+    from src.bench.tasks import build_followups
+    tok = CharacterTokenizer()
+    initial = build_case(tok, 4096, .1, 29)
+    implicit, explicit = build_followups(tok, initial, initial['expected'])
+    assert implicit['messages'][:-1] == explicit['messages'][:-1]
+    a = implicit['messages'][-1]['content']
+    b = explicit['messages'][-1]['content']
+    assert a.replace('the same requested record', 'record ' + initial['target_record']) == b
+    assert initial['expected'] not in b
+    assert implicit['initial_prompt_sha256'] == explicit['initial_prompt_sha256']
+
+
+def test_recall_protocol_runs_all_seeds_cold_and_conditions_scores(tmp_path, monkeypatch):
+    from src.bench import recall_controls
+    calls = []
+    class FakeRunner:
+        tok = CharacterTokenizer()
+        settings = {'backend': 'fake'}
+        manifest = {}
+        def __init__(self, *args):
+            pass
+        def check_prompt(self, case):
+            pass
+        def generate(self, ids, max_new, cold):
+            calls.append(cold)
+            return {'text': 'UNKNOWN', 'ttft_s': 0}
+    monkeypatch.setattr(recall_controls, 'Runner', FakeRunner)
+    monkeypatch.setattr(recall_controls, 'environment', lambda: {})
+    protocol = {'seeds': [17, 29, 41], 'expected_cases': 12, 'backend': 'fake', 'context': 16384,
+                'threads': 1, 'batch': 512, 'initial_budget': 4096, 'absent_budget': 8192,
+                'position': .1, 'max_new': 24}
+    report = recall_controls.run(protocol, {}, '.', tmp_path / 'report.json')
+    assert report['complete'] and len(report['records']) == 12
+    assert calls == [True] * 12
+    assert [r.get('variant') for r in report['records'] if r['kind'] == 'followup'] == [
+        'implicit', 'explicit', 'explicit', 'implicit', 'implicit', 'explicit']
+    summary = recall_controls.summarize(report)
+    assert 'conditional on correct initial retrieval: 0/0' in summary
+    assert 'Absent-record controls: 3/3' in summary

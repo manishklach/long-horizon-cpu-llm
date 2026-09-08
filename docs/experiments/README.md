@@ -90,3 +90,8 @@ in alternating process order across replications to assess host-load and thermal
 the initial runs execute one backend after the other and cannot remove those effects.
 
 The initial run is documented in [results and failure cases](results/README.md).
+
+## Recall failure replication
+
+See [the declared multi-seed recall controls](recall-controls.md) for paired implicit/explicit
+record references and repeated 8K absent-record cases. The protocol is fixed before the run.
