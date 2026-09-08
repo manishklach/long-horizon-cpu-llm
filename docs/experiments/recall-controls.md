@@ -34,6 +34,7 @@ hashes and generation metrics. The CLI generates a Markdown summary only for com
 This is a small synthetic replication on one model and host. Changing a reference phrase
 can identify sensitivity to that prompt contrast; it cannot establish a general explanation
 for long-context failures. The 4K positive controls are not paired 8K positive controls.
+
 ## Multi-seed follow-up findings
 
 The [three-seed control run](results/recall-controls.md), fixed in commit `0b2cdc4` before
