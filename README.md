@@ -101,3 +101,6 @@ sweep covers prompt budgets of 512, 4096 and 8192 tokens; it does not claim 50K 
 
 [Measured results and failure cases](docs/experiments/results/README.md) include a real
 8K retrieval sweep and growing conversations, with raw reports checked in.
+
+[Multi-seed recall controls](docs/experiments/recall-controls.md) replicate the follow-up
+failure and test explicit record IDs, with all outcomes and raw data published.

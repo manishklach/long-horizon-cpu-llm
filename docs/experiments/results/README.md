@@ -49,3 +49,10 @@ These results do not validate 32K or 50K quality, concurrent session residency, 
 - [HF short conversation](sessions-hf.json)
 - [GGUF short conversation](sessions-gguf.json)
 - [GGUF longer conversation](sessions-long-gguf.json)
+
+## Follow-up replication
+
+The [completed three-seed control run](recall-controls.md) found implicit follow-ups
+correct 0/3 and explicit-ID follow-ups correct 3/3, with initial retrieval correct 3/3.
+Absent-record controls remained incorrect 3/3. See the
+[protocol and interpretation](../recall-controls.md) and [raw report](recall-controls.json).
